@@ -9,8 +9,7 @@ use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasi
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, Module32NextW, PROCESSENTRY32W,
-    Process32FirstW, Process32NextW, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
 use windows_sys::Win32::System::Memory::{
@@ -59,29 +58,6 @@ pub fn get_pid_by_name(process_name: &str) -> Result<Option<u32>, String> {
             return Ok(Some(pid));
         }
         ok = unsafe { Process32NextW(snapshot, &mut entry) };
-    }
-    close_handle(snapshot);
-    Ok(None)
-}
-
-pub fn get_module_base(pid: u32, module_name: &str) -> Result<Option<u64>, String> {
-    let snapshot =
-        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err(io_err("CreateToolhelp32Snapshot(TH32CS_SNAPMODULE) failed"));
-    }
-
-    let mut entry: MODULEENTRY32W = unsafe { std::mem::zeroed() };
-    entry.dwSize = std::mem::size_of::<MODULEENTRY32W>() as u32;
-    let mut ok = unsafe { Module32FirstW(snapshot, &mut entry) };
-    while ok != 0 {
-        let name = widestr_to_osstring(&entry.szModule);
-        if name.to_string_lossy().eq_ignore_ascii_case(module_name) {
-            let base = entry.modBaseAddr as usize as u64;
-            close_handle(snapshot);
-            return Ok(Some(base));
-        }
-        ok = unsafe { Module32NextW(snapshot, &mut entry) };
     }
     close_handle(snapshot);
     Ok(None)

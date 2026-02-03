@@ -27,10 +27,10 @@ impl Signature {
         let last = haystack.len() - self.bytes.len();
         'outer: for i in 0..=last {
             for (j, want) in self.bytes.iter().enumerate() {
-                if let Some(want) = want {
-                    if haystack[i + j] != *want {
-                        continue 'outer;
-                    }
+                if let Some(want) = want
+                    && haystack[i + j] != *want
+                {
+                    continue 'outer;
                 }
             }
             return Some(i);

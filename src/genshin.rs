@@ -303,12 +303,12 @@ fn scan_verfiy(il2cpp: &[u8], remote_base: u64) -> Result<u64, String> {
         "E8 ?? ?? ?? ?? EB 0D 48 89 F1 BA 02 00 00 00 E8 ?? ?? ?? ?? 48 89 F1 31 D2",
     )?;
     if let Some(off) = sig.scan(il2cpp) {
-        return Ok(call_target(remote_base, il2cpp, off)?);
+        return call_target(remote_base, il2cpp, off);
     }
     let sig =
         Signature::parse("E8 ?? ?? ?? ?? EB 0D 48 89 F1 BA 02 00 00 00 E8 ?? ?? ?? ?? 48 8B 0D")?;
     if let Some(off) = sig.scan(il2cpp) {
-        return Ok(call_target(remote_base, il2cpp, off)?);
+        return call_target(remote_base, il2cpp, off);
     }
     Err("failed to locate GI verfiy pattern".to_string())
 }
