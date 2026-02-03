@@ -36,15 +36,17 @@ impl Cli {
                         .to_string_lossy()
                         .to_string();
                     fps = value
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid --fps value: {value}"))?;
+                        .parse::<f64>()
+                        .map_err(|_| format!("invalid --fps value: {value}"))?
+                        .round() as u32;
                     i += 2;
                 }
                 _ if arg_lower.starts_with("--fps=") => {
                     let value = arg_lower.trim_start_matches("--fps=");
                     fps = value
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid --fps value: {value}"))?;
+                        .parse::<f64>()
+                        .map_err(|_| format!("invalid --fps value: {value}"))?
+                        .round() as u32;
                     i += 1;
                 }
                 _ => return Err(format!("unknown argument: {arg}\n\n{}", Self::usage())),
