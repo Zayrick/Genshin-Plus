@@ -461,6 +461,7 @@ fn inject_patch(
         win::read_process_memory(process, args.verfiy, &mut org)?;
         sc[0x60..0x70].copy_from_slice(&org);
         let hook = make_abs_jmp(remote_payload + shellcode::GI_HOOKED_VFUNC_VA);
+        sc[0x70..0x80].copy_from_slice(&hook);
         win::write_process_memory_protected(process, args.verfiy, &hook)?;
     }
 
