@@ -23,8 +23,17 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     let pi = win::create_process_suspended(&exe_path, &cli.game_args)?;
     let mut proc = ProcessGuard::new(pi);
 
-    unsafe {
-        FPS_VALUE = cli.fps;
+    // If no FPS and no touch, just launch the game normally without injection
+    if cli.fps.is_none() && !cli.touch {
+        win::resume_thread(proc.pi.hThread)?;
+        proc.disarm();
+        return Ok(());
+    }
+
+    if let Some(fps) = cli.fps {
+        unsafe {
+            FPS_VALUE = fps;
+        }
     }
 
     let is_old_version = std::fs::metadata(&exe_path)
@@ -55,7 +64,11 @@ pub fn run(cli: &Cli) -> Result<(), String> {
 
     let p_unity_wndclass = scan_p_unity_wndclass(&text_copy, text_remote_addr).unwrap_or(0);
     let payloadoep = scan_payloadoep(&text_copy, text_remote_addr)?;
-    let ptr_fps = scan_fps_ptr(&text_copy, text_remote_addr)?;
+    let ptr_fps = if cli.fps.is_some() {
+        Some(scan_fps_ptr(&text_copy, text_remote_addr)?)
+    } else {
+        None
+    };
 
     // il2cpp section
     let mut il2cpp_mod_base = tar_mod_base;
@@ -395,19 +408,20 @@ fn read_u32_le(buf: &[u8], off: usize) -> Result<u32, String> {
 fn inject_patch(
     process: HANDLE,
     tar_mod_base: u64,
-    ptr_fps: u64,
+    ptr_fps: Option<u64>,
     args: InjectArgs,
     custom_dpi_scale: f32,
 ) -> Result<u64, String> {
-    if ptr_fps == 0 {
-        return Err("ptr_fps is null".to_string());
-    }
-
     let mut sc = shellcode::new_shellcode_buffer()?;
 
     // Common patches
-    write_u32(&mut sc, 0x00, std::process::id());
-    write_u64(&mut sc, 0x08, std::ptr::addr_of!(FPS_VALUE) as usize as u64);
+    if ptr_fps.is_some() {
+        write_u32(&mut sc, 0x00, std::process::id());
+        write_u64(&mut sc, 0x08, std::ptr::addr_of!(FPS_VALUE) as usize as u64);
+    } else {
+        // No FPS injection: set host_pid=0 so shellcode trampoline exits immediately
+        write_u32(&mut sc, 0x00, 0);
+    }
     write_u64(&mut sc, 0x80, MessageBoxA as *const () as usize as u64);
     write_u64(
         &mut sc,
@@ -419,8 +433,6 @@ fn inject_patch(
         0x90,
         GetForegroundWindow as *const () as usize as u64,
     );
-    write_u32(&mut sc, 0x150, 1000); // Target_set_60
-    write_u32(&mut sc, 0x158, 60); // Target_set_30
 
     // AutoExit=1: disable shellcode error msg popups (matches reference behavior).
     sc[0x18A..0x18C].copy_from_slice(&0x3AEBu16.to_le_bytes());
@@ -428,8 +440,8 @@ fn inject_patch(
     let remote_payload = win::virtual_alloc_ex(process, 0x4000, win::page_readwrite())?;
     let mut hook_info_ptr = 0x2000usize;
 
-    // PowerSaveSet (optional)
-    if args.p_unity_wndclass != 0 {
+    // PowerSaveSet (optional, only useful for FPS mode)
+    if ptr_fps.is_some() && args.p_unity_wndclass != 0 {
         write_u64(
             &mut sc,
             0x30,
@@ -465,26 +477,28 @@ fn inject_patch(
         win::write_process_memory_protected(process, args.verfiy, &hook)?;
     }
 
-    // Base FPS hook info
-    let private_buffer = alloc_private_buffer(process, tar_mod_base)?;
-    write_u64(&mut sc, 0x18, private_buffer);
+    // Base FPS hook info (only when FPS injection is requested)
+    if let Some(fps_ptr) = ptr_fps {
+        let private_buffer = alloc_private_buffer(process, tar_mod_base)?;
+        write_u64(&mut sc, 0x18, private_buffer);
 
-    let alienaddr = ptr_fps & 0xFFFFFFFFFFFFFFF8;
-    let mut orgpart = [0u8; 16];
-    win::read_process_memory(process, alienaddr, &mut orgpart)?;
-    let mut hookedpart = orgpart;
-    let mask = (ptr_fps & 0x7) as usize;
-    if mask + 4 > hookedpart.len() {
-        return Err("fps patch mask out of range".to_string());
+        let alienaddr = fps_ptr & 0xFFFFFFFFFFFFFFF8;
+        let mut orgpart = [0u8; 16];
+        win::read_process_memory(process, alienaddr, &mut orgpart)?;
+        let mut hookedpart = orgpart;
+        let mask = (fps_ptr & 0x7) as usize;
+        if mask + 4 > hookedpart.len() {
+            return Err("fps patch mask out of range".to_string());
+        }
+        let immva = ((private_buffer as i64 - fps_ptr as i64) - 4) as i32;
+        hookedpart[mask..mask + 4].copy_from_slice(&immva.to_le_bytes());
+
+        write_u64(&mut sc, hook_info_ptr, alienaddr);
+        write_u64(&mut sc, hook_info_ptr + 0x08, 0);
+        sc[hook_info_ptr + 0x10..hook_info_ptr + 0x20].copy_from_slice(&hookedpart);
+        sc[hook_info_ptr + 0x20..hook_info_ptr + 0x30].copy_from_slice(&orgpart);
+        hook_info_ptr += 0x30;
     }
-    let immva = ((private_buffer as i64 - ptr_fps as i64) - 4) as i32;
-    hookedpart[mask..mask + 4].copy_from_slice(&immva.to_le_bytes());
-
-    write_u64(&mut sc, hook_info_ptr, alienaddr);
-    write_u64(&mut sc, hook_info_ptr + 0x08, 0);
-    sc[hook_info_ptr + 0x10..hook_info_ptr + 0x20].copy_from_slice(&hookedpart);
-    sc[hook_info_ptr + 0x20..hook_info_ptr + 0x30].copy_from_slice(&orgpart);
-    hook_info_ptr += 0x30;
 
     // Touch + DPI injection (optional)
     if let Some(list) = args.func_list {
