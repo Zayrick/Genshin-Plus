@@ -340,17 +340,27 @@ fn scan_mobile_ui(
 ) -> Result<HookFuncList, String> {
     let mut out = HookFuncList::default();
 
-    let sig = Signature::parse(
+    // New pattern (v2.9.4+): calls now have an extra r8 argument
+    let sig_new = Signature::parse(
+        "48 8B 05 ?? ?? ?? ?? 48 8B 88 ?? ?? ?? ?? 48 85 C9 0F ?? ?? ?? ?? ?? BA 02 00 00 00 41 B0 01 E8 ?? ?? ?? ?? 48 89 F9 BA 03 00 00 00 45 31 C0 E8",
+    )?;
+    // Old pattern (fallback)
+    let sig_old = Signature::parse(
         "48 8B 05 ?? ?? ?? ?? 48 8B 88 ?? ?? ?? ?? 48 85 C9 0F ?? ?? ?? ?? ?? BA 02 00 00 00 E8 ?? ?? ?? ?? 48 89 F9 BA 03 00 00 00 E8",
     )?;
-    let off = sig
-        .scan(il2cpp)
-        .ok_or_else(|| "failed to locate mobile UI pattern (GI)".to_string())?;
-
-    out.grph_class = rip_target(remote_base, il2cpp, off + 0x3)?;
-    out.grph_uicl_va = read_u32_le(il2cpp, off + 0xA)?;
-    out.func_gui_set = call_target_at(remote_base, il2cpp, off + 0x1D)?;
-    out.func_input_set = call_target_at(remote_base, il2cpp, off + 0x2A)?;
+    if let Some(off) = sig_new.scan(il2cpp) {
+        out.grph_class = rip_target(remote_base, il2cpp, off + 0x3)?;
+        out.grph_uicl_va = read_u32_le(il2cpp, off + 0xA)?;
+        out.func_gui_set = call_target_at(remote_base, il2cpp, off + 0x20)?;
+        out.func_input_set = call_target_at(remote_base, il2cpp, off + 0x30)?;
+    } else if let Some(off) = sig_old.scan(il2cpp) {
+        out.grph_class = rip_target(remote_base, il2cpp, off + 0x3)?;
+        out.grph_uicl_va = read_u32_le(il2cpp, off + 0xA)?;
+        out.func_gui_set = call_target_at(remote_base, il2cpp, off + 0x1D)?;
+        out.func_input_set = call_target_at(remote_base, il2cpp, off + 0x2A)?;
+    } else {
+        return Err("failed to locate mobile UI pattern (GI)".to_string());
+    }
 
     let sig = Signature::parse(
         "48 8B 05 ?? ?? ?? ?? 0F 85 ?? ?? ?? ?? 48 8B B8 ?? ?? ?? ?? 48 85 FF 0F 84 ?? ?? ?? ?? 83 BF ?? ?? ?? ?? 03",
