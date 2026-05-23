@@ -530,12 +530,12 @@ fn inject_patch(
         win::write_process_memory_protected(process, list.ui_unhook_time, &hook)?;
 
         if custom_dpi_scale != 0.0 && list.func_get_dpi != 0 {
-            // Patch DPI function to return Custom_DPI_Scale * 96
+            // Patch DPI function to return Custom_DPI_Scale * 96.0 as f32.
             let mut patch = [
-                0xB8u8, 0x60, 0x00, 0x00, 0x00, 0x66, 0x0F, 0x6E, 0xC0, 0x0F, 0x5B, 0xC0, 0xC3,
+                0xB8u8, 0x60, 0x00, 0x00, 0x00, 0x66, 0x0F, 0x6E, 0xC0, 0xC3, 0xCC, 0xCC, 0xCC,
                 0xCC, 0xCC, 0xCC,
             ];
-            let dpiscale_n = (custom_dpi_scale * 96.0) as u32;
+            let dpiscale_n = custom_dpi_scale * 96.0;
             patch[1..5].copy_from_slice(&dpiscale_n.to_le_bytes());
 
             let mut org = [0u8; 16];
