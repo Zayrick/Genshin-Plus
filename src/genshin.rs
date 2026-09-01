@@ -12,11 +12,15 @@ use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, MessageBoxA};
 
 pub fn run(cli: &Cli) -> Result<(), String> {
-    let exe_path = find_game_exe()?;
+    let exe_path = find_game_exe(cli.game_exe.as_deref())?;
+    let process_name = exe_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("invalid game executable name: {}", exe_path.display()))?;
 
-    if let Some(pid) = win::get_pid_by_name("yuanshen.exe")? {
+    if let Some(pid) = win::get_pid_by_name(process_name)? {
         return Err(format!(
-            "yuanshen.exe is already running (pid={pid}). Please close the game first."
+            "{process_name} is already running (pid={pid}). Please close the game first."
         ));
     }
 
@@ -37,7 +41,7 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     }
 
     let is_old_version = std::fs::metadata(&exe_path)
-        .map_err(|e| format!("read yuanshen.exe metadata failed: {e}"))?
+        .map_err(|e| format!("read {} metadata failed: {e}", exe_path.display()))?
         .len()
         < 0x800000;
 
@@ -120,16 +124,79 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
-fn find_game_exe() -> Result<PathBuf, String> {
+fn find_game_exe(requested_exe: Option<&Path>) -> Result<PathBuf, String> {
     let cwd = std::env::current_dir().map_err(|e| format!("get current_dir failed: {e}"))?;
-    let exe_path = cwd.join("yuanshen.exe");
+    let exe_path = game_exe_candidate(requested_exe, &cwd);
+
     if !exe_path.is_file() {
+        return match requested_exe {
+            Some(_) => Err(format!(
+                "game executable supplied on the command line was not found: {}",
+                exe_path.display()
+            )),
+            None => Err(format!(
+                "`yuanshen.exe` not found in current directory: {}",
+                cwd.display()
+            )),
+        };
+    }
+
+    if !exe_path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
         return Err(format!(
-            "`yuanshen.exe` not found in current directory: {}",
-            cwd.display()
+            "game executable must be an .exe file: {}",
+            exe_path.display()
         ));
     }
+
     Ok(exe_path)
+}
+
+fn game_exe_candidate(requested_exe: Option<&Path>, cwd: &Path) -> PathBuf {
+    match requested_exe {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => cwd.join(path),
+        None => cwd.join("yuanshen.exe"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::game_exe_candidate;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn command_line_executable_takes_priority() {
+        let cwd = Path::new(r"C:\Launcher");
+        let requested = Path::new(r"D:\Games\YuanShen.exe");
+
+        assert_eq!(
+            game_exe_candidate(Some(requested), cwd),
+            PathBuf::from(r"D:\Games\YuanShen.exe")
+        );
+    }
+
+    #[test]
+    fn relative_command_line_executable_is_resolved_from_current_directory() {
+        let cwd = Path::new(r"C:\Launcher");
+
+        assert_eq!(
+            game_exe_candidate(Some(Path::new(r"game\YuanShen.exe")), cwd),
+            PathBuf::from(r"C:\Launcher\game\YuanShen.exe")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_yuanshen_in_current_directory() {
+        let cwd = Path::new(r"C:\Games");
+
+        assert_eq!(
+            game_exe_candidate(None, cwd),
+            PathBuf::from(r"C:\Games\yuanshen.exe")
+        );
+    }
 }
 
 static mut FPS_VALUE: u32 = 120;

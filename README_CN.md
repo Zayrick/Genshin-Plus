@@ -18,9 +18,11 @@
 
 ## 功能特性
 
-- **帧率解锁** - 突破 60 FPS 限制，支持自定义帧率（10-1000 FPS，默认：120）
+- **帧率解锁** - 突破 60 FPS 限制，支持自定义帧率（10-1000 FPS）
 - **移动端 UI 注入** - 启用触控/移动端 UI 模式，带有 5 倍 DPI 缩放
 - **多版本支持** - 兼容 3.7 至 5.5+ 版本的游戏
+- **自定义游戏路径** - 优先使用命令行中指定的游戏 EXE，无需把本程序放进游戏目录
+- **自动请求管理员权限** - 检测当前进程权限，并通过 Windows `runas` 自动重新启动且保留全部参数
 - **Rust 编写** - 内存安全，运行时无外部依赖
 - **单文件分发** - 便携式可执行文件，无需安装
 
@@ -28,22 +30,27 @@
 
 - Windows 10/11 (x64)
 - 原神国服客户端 (yuanshen.exe)
-- 管理员权限
+- 管理员权限（启动时程序会自动请求，仍需用户确认 UAC）
 
 ## 使用方法
 
-1. 将 `genshin_plus.exe` 放置到原神游戏目录中（与 `yuanshen.exe` 同一文件夹）
-2. 以管理员身份运行 `genshin_plus.exe`
+1. 在命令行中把游戏 EXE 作为第一个位置参数传入，例如：
+   `genshin_plus.exe "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps 120`
+2. 在 Windows UAC 提示中确认管理员权限
 3. 游戏将自动启动并应用补丁
+
+也可以使用 `--game <EXE>` 指定路径。如果没有提供游戏 EXE，程序会保持向后兼容，使用当前工作目录中的 `yuanshen.exe`。命令行指定的 EXE 始终优先。
 
 ### 命令行参数
 
 ```
 用法:
-  genshin_plus [--fps <N>] [--touch] [-- <游戏参数...>]
+  genshin_plus [<游戏.exe>] [--fps <N>] [--touch] [-- <游戏参数...>]
+  genshin_plus --game <游戏.exe> [--fps <N>] [--touch] [-- <游戏参数...>]
 
 选项:
-  --fps <N>     目标帧率 (10..=1000)。默认: 120
+  --game <EXE>  目标游戏 EXE（也可以直接作为第一个位置参数传入）
+  --fps <N>     目标帧率 (10..=1000)。省略时不修改帧率
   --touch       启用触控/移动端 UI 注入（同时将 DPI 缩放设为 5 倍）
   -h, --help    显示帮助信息
 ```
@@ -51,8 +58,11 @@
 ### 使用示例
 
 ```bash
-# 使用默认 120 帧启动
-genshin_plus.exe
+# 优先使用命令行指定的游戏 EXE（路径可包含空格）
+genshin_plus.exe "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps 120
+
+# 等价的 --game 写法
+genshin_plus.exe --game "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps 120
 
 # 使用自定义 144 帧启动
 genshin_plus.exe --fps 144
@@ -67,7 +77,7 @@ genshin_plus.exe --fps 240 --touch
 genshin_plus.exe --fps 120 -- -popupwindow
 
 # 配合 Apollo（Sunshine 的一个 fork）串流使用
-cmd /C ".\genshin_plus.exe --fps %APOLLO_CLIENT_FPS% --touch -- -screen-fullscreen 1 -screen-width %APOLLO_CLIENT_WIDTH% -screen-height %APOLLO_CLIENT_HEIGHT%"
+cmd /C .\genshin_plus.exe "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps %APOLLO_CLIENT_FPS% --touch -- -screen-fullscreen 1 -screen-width %APOLLO_CLIENT_WIDTH% -screen-height %APOLLO_CLIENT_HEIGHT%
 ```
 
 ## 从源码构建
@@ -94,6 +104,7 @@ cargo build --release
 
 ```
 genshin_plus/
+├── build.rs           # 嵌入 Windows 应用清单
 ├── Cargo.toml          # 项目配置
 ├── src/
 │   ├── main.rs         # 程序入口

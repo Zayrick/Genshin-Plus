@@ -18,9 +18,11 @@ This project stands on the shoulders of giants. All credit for the core logic, s
 
 ## Features
 
-- **FPS Unlock** - Bypass the 60 FPS limit, supports custom frame rates (10-1000 FPS, default: 120)
+- **FPS Unlock** - Bypass the 60 FPS limit, supports custom frame rates (10-1000 FPS)
 - **Mobile UI Injection** - Enable touch/mobile UI mode with custom DPI scaling (5x)
 - **Multi-Version Support** - Compatible with game versions from 3.7 to 5.5+
+- **Custom Game Path** - Prefer a game executable supplied on the command line; the unlocker no longer has to be in the game directory
+- **Automatic Elevation Request** - Detects the current token and relaunches through Windows `runas` while preserving all arguments
 - **Written in Rust** - Memory safe, no external dependencies at runtime
 - **Single Binary** - Portable executable, no installation required
 
@@ -28,22 +30,27 @@ This project stands on the shoulders of giants. All credit for the core logic, s
 
 - Windows 10/11 (x64)
 - Genshin Impact (Chinese client - yuanshen.exe)
-- Administrator privileges
+- Administrator privileges (requested automatically at startup; the user must still approve UAC)
 
 ## Usage
 
-1. Place `genshin_plus.exe` in your Genshin Impact game directory (same folder as `yuanshen.exe`)
-2. Run `genshin_plus.exe` with administrator privileges
+1. Pass the game executable as the first positional argument, for example:
+   `genshin_plus.exe "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps 120`
+2. Approve the Windows UAC prompt
 3. The game will launch automatically with the patches applied
+
+You can also supply the path with `--game <EXE>`. If no game executable is supplied, the backward-compatible fallback is `yuanshen.exe` in the current working directory. A command-line executable always takes priority.
 
 ### Command Line Options
 
 ```
 Usage:
-  genshin_plus [--fps <N>] [--touch] [-- <game args...>]
+  genshin_plus [<game.exe>] [--fps <N>] [--touch] [-- <game args...>]
+  genshin_plus --game <game.exe> [--fps <N>] [--touch] [-- <game args...>]
 
 Options:
-  --fps <N>     Target FPS (10..=1000). Default: 120
+  --game <EXE>  Target game executable (also accepted as the first positional argument)
+  --fps <N>     Target FPS (10..=1000). If omitted, FPS is not modified
   --touch       Enable touch/mobile UI injection (also sets DPI scale to 5x)
   -h, --help    Show this help
 ```
@@ -51,8 +58,11 @@ Options:
 ### Examples
 
 ```bash
-# Launch with default 120 FPS
-genshin_plus.exe
+# Prefer a game executable supplied on the command line (spaces are supported)
+genshin_plus.exe "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps 120
+
+# Equivalent --game form
+genshin_plus.exe --game "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps 120
 
 # Launch with custom 144 FPS
 genshin_plus.exe --fps 144
@@ -67,7 +77,7 @@ genshin_plus.exe --fps 240 --touch
 genshin_plus.exe --fps 120 -- -popupwindow
 
 # Use with Apollo (a Sunshine fork) for game streaming
-cmd /C ".\genshin_plus.exe --fps %APOLLO_CLIENT_FPS% --touch -- -screen-fullscreen 1 -screen-width %APOLLO_CLIENT_WIDTH% -screen-height %APOLLO_CLIENT_HEIGHT%"
+cmd /C .\genshin_plus.exe "D:\Genshin Impact\Genshin Impact Game\YuanShen.exe" --fps %APOLLO_CLIENT_FPS% --touch -- -screen-fullscreen 1 -screen-width %APOLLO_CLIENT_WIDTH% -screen-height %APOLLO_CLIENT_HEIGHT%
 ```
 
 ## Building from Source
@@ -94,6 +104,7 @@ cargo build --release
 
 ```
 genshin_plus/
+├── build.rs           # Embeds the Windows application manifest
 ├── Cargo.toml          # Project configuration
 ├── src/
 │   ├── main.rs         # Entry point

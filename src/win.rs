@@ -7,6 +7,9 @@ use std::path::Path;
 
 use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Security::{
+    GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+};
 use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
@@ -17,9 +20,11 @@ use windows_sys::Win32::System::Memory::{
     PAGE_READWRITE, VirtualAllocEx, VirtualFreeEx, VirtualProtectEx,
 };
 use windows_sys::Win32::System::Threading::{
-    CREATE_SUSPENDED, CreateProcessW, CreateRemoteThread, GetExitCodeThread, PROCESS_INFORMATION,
-    ResumeThread, STARTUPINFOW, TerminateProcess,
+    CREATE_SUSPENDED, CreateProcessW, CreateRemoteThread, GetCurrentProcess, GetExitCodeThread,
+    OpenProcessToken, PROCESS_INFORMATION, ResumeThread, STARTUPINFOW, TerminateProcess,
 };
+use windows_sys::Win32::UI::Shell::ShellExecuteW;
+use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 pub fn to_wide_null(s: &OsStr) -> Vec<u16> {
     let mut wide: Vec<u16> = s.encode_wide().collect();
@@ -29,6 +34,81 @@ pub fn to_wide_null(s: &OsStr) -> Vec<u16> {
 
 fn io_err(context: &str) -> String {
     format!("{context}: {}", io::Error::last_os_error())
+}
+
+pub fn relaunch_as_admin_if_needed() -> Result<bool, String> {
+    if is_process_elevated()? {
+        return Ok(false);
+    }
+
+    let current_exe =
+        std::env::current_exe().map_err(|e| format!("get current executable path failed: {e}"))?;
+    let current_dir =
+        std::env::current_dir().map_err(|e| format!("get current directory failed: {e}"))?;
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+
+    let verb_w = to_wide_null(OsStr::new("runas"));
+    let exe_w = to_wide_null(current_exe.as_os_str());
+    let current_dir_w = to_wide_null(current_dir.as_os_str());
+    let parameters = build_windows_cmdline(&args);
+    let parameters_w: Vec<u16> = parameters
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let parameters_ptr = if args.is_empty() {
+        std::ptr::null()
+    } else {
+        parameters_w.as_ptr()
+    };
+
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb_w.as_ptr(),
+            exe_w.as_ptr(),
+            parameters_ptr,
+            current_dir_w.as_ptr(),
+            SW_SHOWNORMAL,
+        )
+    };
+    let result_code = result as isize;
+    if result_code <= 32 {
+        return Err(format!(
+            "failed to request administrator privileges (ShellExecuteW code {result_code}): {}",
+            io::Error::last_os_error()
+        ));
+    }
+
+    Ok(true)
+}
+
+fn is_process_elevated() -> Result<bool, String> {
+    let mut token = std::ptr::null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(io_err("OpenProcessToken failed"));
+    }
+
+    let result = (|| {
+        let mut elevation: TOKEN_ELEVATION = unsafe { std::mem::zeroed() };
+        let mut returned_size = 0u32;
+        let ok = unsafe {
+            GetTokenInformation(
+                token,
+                TokenElevation,
+                std::ptr::addr_of_mut!(elevation).cast(),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut returned_size,
+            )
+        };
+        if ok == 0 {
+            return Err(io_err("GetTokenInformation(TokenElevation) failed"));
+        }
+
+        Ok(elevation.TokenIsElevated != 0)
+    })();
+
+    close_handle(token);
+    result
 }
 
 pub fn close_handle(handle: HANDLE) {
@@ -104,16 +184,13 @@ pub fn create_process_suspended(
 
     let exe_w = to_wide_null(exe_path.as_os_str());
 
-    let mut cmdline_w: Option<Vec<u16>> = None;
-    let cmdline_ptr = if args.is_empty() {
-        std::ptr::null_mut()
-    } else {
-        let cmd = build_windows_cmdline(args);
-        let mut v: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
-        let ptr = v.as_mut_ptr();
-        cmdline_w = Some(v);
-        ptr
-    };
+    // CreateProcessW expects argv[0] to be present in lpCommandLine when a
+    // command line is supplied, even when lpApplicationName is non-null.
+    let mut cmdline_args = Vec::with_capacity(args.len() + 1);
+    cmdline_args.push(exe_path.as_os_str().to_os_string());
+    cmdline_args.extend_from_slice(args);
+    let cmd = build_windows_cmdline(&cmdline_args);
+    let mut cmdline_w: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
 
     let cur_dir = exe_path
         .parent()
@@ -123,7 +200,7 @@ pub fn create_process_suspended(
     let ok = unsafe {
         CreateProcessW(
             exe_w.as_ptr(),
-            cmdline_ptr,
+            cmdline_w.as_mut_ptr(),
             std::ptr::null(),
             std::ptr::null(),
             0,
@@ -137,7 +214,6 @@ pub fn create_process_suspended(
     if ok == 0 {
         return Err(io_err("CreateProcessW failed"));
     }
-    drop(cmdline_w);
     Ok(pi)
 }
 
@@ -395,4 +471,24 @@ fn quote_windows_arg(arg: &str) -> String {
 
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_windows_cmdline;
+    use std::ffi::OsString;
+
+    #[test]
+    fn quotes_executable_and_arguments_for_windows() {
+        let args = [
+            OsString::from(r"D:\Games\Genshin Impact Game\YuanShen.exe"),
+            OsString::from("-popupwindow"),
+            OsString::from("value with spaces"),
+        ];
+
+        assert_eq!(
+            build_windows_cmdline(&args),
+            r#""D:\Games\Genshin Impact Game\YuanShen.exe" -popupwindow "value with spaces""#
+        );
+    }
 }

@@ -13,6 +13,10 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    if win::relaunch_as_admin_if_needed()? {
+        return Ok(());
+    }
+
     let cli = cli::Cli::parse()?;
     genshin::run(&cli)?;
     Ok(())
